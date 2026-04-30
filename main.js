@@ -43,7 +43,7 @@ function createWindow() {
 
   win.setAlwaysOnTop(true, 'floating');
   Menu.setApplicationMenu(null);
-  win.loadURL('https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/sene/SENE-Launchpad.form');
+  win.loadURL('https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/sene/TADesktop.form');
 
   win.on('closed', () => {
     win = null;
