@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(Get-Content \"C:\\\\Users\\\\RICHAR~1.CAV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--TAElectron\\\\5f2e3be4-9f09-46dc-92cb-4fd9a6c17b8a\\\\tasks\\\\b9n617n17.output\" -Wait)",
+      "Bash(Select-String -Pattern \"msi|error|done|created|built|fail\" -AllMatches)",
+      "Bash(gh auth *)",
+      "Bash(git -C c:/TAElectron status)",
+      "PowerShell(gh auth status 2>&1)",
+      "PowerShell(git -C C:\\\\TAElectron status 2>&1)"
+    ]
+  }
+}
