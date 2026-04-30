@@ -1,5 +1,66 @@
-const { app, BrowserWindow, Tray, nativeImage, screen, Menu } = require('electron');
+const { app, BrowserWindow, Tray, nativeImage, screen, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
+const { spawn } = require('child_process');
+const https = require('https');
+const http = require('http');
+const os = require('os');
+
+const TA_URL = 'https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/sene/SENE-Launchpad.form';
+
+const config = (() => {
+  const defaults = require('./ta.config.js');
+  try { return { ...defaults, ...require('./ta.config.local.js') }; }
+  catch { return defaults; }
+})();
+
+function postJson(url, payload, token) {
+  return new Promise((resolve) => {
+    let body;
+    try { body = JSON.stringify(payload); }
+    catch (e) { return resolve({ ok: false, message: 'Failed to serialize payload.' }); }
+
+    let parsed;
+    try { parsed = new URL(url); }
+    catch (e) { return resolve({ ok: false, message: `Invalid URL: ${url}` }); }
+
+    const isHttps = parsed.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const req = client.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'POST',
+      headers,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            const json = JSON.parse(data);
+            resolve({ ok: true, jobId: json.jobId, workflowUrl: json.workflowUrl, status: json.status });
+          } catch {
+            resolve({ ok: true });
+          }
+        } else {
+          let message = `HTTP ${res.statusCode}`;
+          try {
+            const json = JSON.parse(data);
+            if (json.message || json.error) message += `: ${json.message || json.error}`;
+          } catch { /* ignore */ }
+          resolve({ ok: false, httpStatus: res.statusCode, message });
+        }
+      });
+    });
+
+    req.on('error', (err) => resolve({ ok: false, message: `Network error: ${err.message}` }));
+    req.write(body);
+    req.end();
+  });
+}
 
 app.setName('TA Launchpad');
 
@@ -37,13 +98,15 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      webviewTag: true,
     },
     title: 'TA Launchpad',
   });
 
   win.setAlwaysOnTop(true, 'floating');
   Menu.setApplicationMenu(null);
-  win.loadURL('https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/sene/SENE-Launchpad.form');
+  win.loadFile('index.html');
 
   win.on('closed', () => {
     win = null;
@@ -71,6 +134,60 @@ function toggleWindow() {
     win.focus();
   }
 }
+
+ipcMain.handle('get-form-url', () => TA_URL);
+
+ipcMain.handle('detect-word', () => {
+  return new Promise((resolve) => {
+    const script = `
+try {
+  $word = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Word.Application')
+  try {
+    $doc = $word.ActiveDocument
+    $name = $doc.Name
+    $fullName = $doc.FullName
+    if ($fullName -eq $name) {
+      Write-Output '{"status":"unsaved"}'
+    } else {
+      Write-Output ([PSCustomObject]@{status='ok';name=$name;fullName=$fullName} | ConvertTo-Json -Compress)
+    }
+  } catch {
+    Write-Output '{"status":"no_document"}'
+  }
+} catch {
+  Write-Output '{"status":"not_running"}'
+}
+`;
+    const ps = spawn('powershell', ['-NonInteractive', '-NoProfile', '-Command', script]);
+    let output = '';
+    ps.stdout.on('data', d => { output += d.toString(); });
+    ps.on('close', () => {
+      try { resolve(JSON.parse(output.trim())); }
+      catch { resolve({ status: 'error' }); }
+    });
+  });
+});
+
+// Calls our server-side wrapper endpoint, which is expected to invoke:
+//   JobService.CreateJob(sessionId, processIdentity, jobInitialization)
+// Electron never calls the TA SDK directly.
+ipcMain.handle('submit-word-document', async (_event, documentInfo) => {
+  if (!config.TA_API_BASE_URL) {
+    return { ok: false, message: 'API not configured. Set TA_API_BASE_URL in ta.config.local.js.' };
+  }
+  const payload = {
+    documentName: documentInfo.name,
+    documentPath: documentInfo.fullName,
+    submittedBy: os.userInfo().username,
+    source: 'TotalAgility Desktop Assistant',
+    submittedAt: new Date().toISOString(),
+    processName: 'Word Document Review',
+  };
+  const url = config.TA_API_BASE_URL + config.TA_START_WORKFLOW_ENDPOINT;
+  return postJson(url, payload, config.TA_API_TOKEN || null);
+});
+
+ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
 
 app.whenReady().then(() => {
   // Keep the app running without a dock/taskbar presence

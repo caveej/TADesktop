@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    webview {
+      flex: 1;
+      width: 100%;
+    }
+
+    .action-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      background: #f5f5f5;
+      border-top: 1px solid #ddd;
+      height: 52px;
+      flex-shrink: 0;
+    }
+
+    .btn-word {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-word:hover { background: #0055aa; }
+    .btn-word:active { background: #004499; }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-overlay.visible { display: flex; }
+
+    .modal {
+      background: white;
+      border-radius: 8px;
+      width: 100%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .modal-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .modal-body { padding: 18px; }
+
+    .modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid #eee;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .info-row { margin-bottom: 14px; }
+    .info-label { font-size: 10px; text-transform: uppercase; color: #999; font-weight: 600; margin-bottom: 3px; letter-spacing: 0.5px; }
+    .info-value { font-size: 13px; color: #1a1a1a; word-break: break-all; }
+    .info-value.mono { font-family: 'Consolas', monospace; font-size: 11px; color: #555; }
+
+    .btn-primary {
+      padding: 8px 16px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-primary:hover { background: #0055aa; }
+
+    .btn-secondary {
+      padding: 8px 16px;
+      background: white;
+      color: #444;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { background: #f5f5f5; }
+
+    /* Progress steps */
+    .progress-steps { display: flex; flex-direction: column; gap: 14px; }
+    .step { display: flex; align-items: center; gap: 12px; }
+    .step-icon {
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 600; flex-shrink: 0;
+    }
+    .step-icon.pending { background: #f0f0f0; color: #aaa; }
+    .step-icon.active  { background: #0066cc; color: white; }
+    .step-icon.done    { background: #22c55e; color: white; }
+    .step-label { font-size: 13px; color: #555; }
+    .step-label.active { color: #0066cc; font-weight: 500; }
+    .step-label.done   { color: #16a34a; }
+
+    /* Job card */
+    .job-card {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 14px;
+      margin-top: 10px;
+    }
+    .job-name { font-size: 13px; font-weight: 600; color: #1a1a1a; margin-bottom: 10px; }
+    .job-rows { display: flex; flex-direction: column; gap: 6px; }
+    .job-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+    .job-key { color: #888; }
+    .job-val { color: #333; font-weight: 500; }
+    .badge { padding: 2px 8px; background: #dcfce7; color: #16a34a; border-radius: 12px; font-size: 11px; font-weight: 600; }
+
+    /* Error */
+    .error-body { text-align: center; padding: 12px 0 4px; }
+    .error-emoji { font-size: 36px; margin-bottom: 12px; }
+    .error-text { font-size: 13px; color: #444; line-height: 1.5; }
+
+    .state-panel { display: none; }
+    .state-panel.active { display: block; }
+
+    .success-label { font-size: 13px; color: #16a34a; font-weight: 600; margin-bottom: 14px; }
+    .recent-label { font-size: 10px; text-transform: uppercase; color: #999; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+
+  <webview id="form-view" allowpopups></webview>
+
+  <div class="action-bar">
+    <button class="btn-word" id="btn-submit-word">
+      📄 Submit Word Document
+    </button>
+  </div>
+
+  <!-- Modal overlay -->
+  <div class="modal-overlay" id="overlay">
+    <div class="modal">
+
+      <div class="modal-header">
+        <span id="modal-icon">📄</span>
+        <h2 id="modal-title">Submit Word Document</h2>
+      </div>
+
+      <!-- Confirm -->
+      <div class="state-panel" id="state-confirm">
+        <div class="modal-body">
+          <div class="info-row">
+            <div class="info-label">Document</div>
+            <div class="info-value" id="doc-name"></div>
+          </div>
+          <div class="info-row">
+            <div class="info-label">File Path</div>
+            <div class="info-value mono" id="doc-path"></div>
+          </div>
+          <div class="info-row">
+            <div class="info-label">Action</div>
+            <div class="info-value">Submit for Review</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="btn-cancel">Cancel</button>
+          <button class="btn-primary" id="btn-submit">Submit for Review</button>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div class="state-panel" id="state-progress">
+        <div class="modal-body">
+          <div class="progress-steps">
+            <div class="step" id="step-0">
+              <div class="step-icon pending">1</div>
+              <div class="step-label">Preparing document</div>
+            </div>
+            <div class="step" id="step-1">
+              <div class="step-icon pending">2</div>
+              <div class="step-label">Sending request to TotalAgility</div>
+            </div>
+            <div class="step" id="step-2">
+              <div class="step-icon pending">3</div>
+              <div class="step-label">Starting Word Document Review workflow</div>
+            </div>
+            <div class="step" id="step-3">
+              <div class="step-icon pending">4</div>
+              <div class="step-label">Workflow started</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Success -->
+      <div class="state-panel" id="state-success">
+        <div class="modal-body">
+          <div class="success-label">✓ Workflow started successfully</div>
+          <div class="recent-label">Recent Job</div>
+          <div class="job-card">
+            <div class="job-name" id="result-name"></div>
+            <div class="job-rows">
+              <div class="job-row">
+                <span class="job-key">Workflow</span>
+                <span class="job-val">Word Document Review</span>
+              </div>
+              <div class="job-row">
+                <span class="job-key">Status</span>
+                <span class="badge">Started</span>
+              </div>
+              <div class="job-row" id="row-job-id" style="display:none">
+                <span class="job-key">Job ID</span>
+                <span class="job-val" id="result-job-id"></span>
+              </div>
+              <div class="job-row">
+                <span class="job-key">Time</span>
+                <span class="job-val" id="result-time"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="btn-open-workflow" style="display:none">Open Workflow</button>
+          <button class="btn-primary" id="btn-done">Done</button>
+        </div>
+      </div>
+
+      <!-- Error -->
+      <div class="state-panel" id="state-error">
+        <div class="modal-body">
+          <div class="error-body">
+            <div class="error-emoji" id="error-emoji">⚠️</div>
+            <div class="error-text" id="error-text"></div>
+            <div id="error-detail" style="margin-top:8px;font-size:11px;color:#999;font-family:Consolas,monospace;display:none"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="btn-error-close">Close</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    window.electronAPI.getFormUrl().then(url => {
+      document.getElementById('form-view').src = url;
+    });
+
+    const overlay = document.getElementById('overlay');
+    let currentDocInfo = null;
+    let currentWorkflowUrl = null;
+
+    function showState(name) {
+      document.querySelectorAll('.state-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('state-' + name).classList.add('active');
+    }
+
+    function openModal() { overlay.classList.add('visible'); }
+    function closeModal() { overlay.classList.remove('visible'); currentWorkflowUrl = null; }
+
+    function setStep(index, status) {
+      const step = document.getElementById('step-' + index);
+      const icon = step.querySelector('.step-icon');
+      const label = step.querySelector('.step-label');
+      icon.className = 'step-icon ' + status;
+      label.className = 'step-label ' + status;
+      icon.textContent = status === 'done' ? '✓' : index + 1;
+    }
+
+    function resetSteps() { [0,1,2,3].forEach(i => setStep(i, 'pending')); }
+
+    function showWordError(emoji, text) {
+      document.getElementById('error-emoji').textContent = emoji;
+      document.getElementById('error-text').textContent = text;
+      document.getElementById('error-detail').style.display = 'none';
+      document.getElementById('error-detail').textContent = '';
+      showState('error');
+    }
+
+    function showApiError(result) {
+      resetSteps();
+      document.getElementById('error-emoji').textContent = '🔌';
+      document.getElementById('error-text').textContent = 'The request to TotalAgility failed.';
+      const detail = document.getElementById('error-detail');
+      detail.textContent = result.message || 'Unknown error';
+      detail.style.display = 'block';
+      showState('error');
+    }
+
+    async function runProgress(docInfo) {
+      showState('progress');
+
+      // Step 1 — prepare
+      setStep(0, 'active');
+      await new Promise(r => setTimeout(r, 600));
+      setStep(0, 'done');
+
+      // Step 2 — real API call
+      setStep(1, 'active');
+      const result = await window.electronAPI.submitWordDocument(docInfo);
+      if (!result.ok) { showApiError(result); return; }
+      setStep(1, 'done');
+
+      // Step 3 — brief pause
+      setStep(2, 'active');
+      await new Promise(r => setTimeout(r, 600));
+      setStep(2, 'done');
+
+      // Step 4 — done
+      setStep(3, 'active');
+      await new Promise(r => setTimeout(r, 400));
+      setStep(3, 'done');
+
+      resetSteps();
+
+      // Populate success card
+      document.getElementById('result-name').textContent = docInfo.name;
+      document.getElementById('result-time').textContent = new Date().toLocaleTimeString();
+
+      if (result.jobId) {
+        document.getElementById('result-job-id').textContent = result.jobId;
+        document.getElementById('row-job-id').style.display = 'flex';
+      } else {
+        document.getElementById('row-job-id').style.display = 'none';
+      }
+
+      const btnOpen = document.getElementById('btn-open-workflow');
+      if (result.workflowUrl) {
+        currentWorkflowUrl = result.workflowUrl;
+        btnOpen.style.display = 'inline-block';
+      } else {
+        btnOpen.style.display = 'none';
+      }
+
+      showState('success');
+    }
+
+    document.getElementById('btn-submit-word').addEventListener('click', async () => {
+      openModal();
+      showState('confirm');
+      document.getElementById('doc-name').textContent = 'Checking…';
+      document.getElementById('doc-path').textContent = '';
+
+      const result = await window.electronAPI.detectWord();
+
+      if (result.status === 'not_running') { showWordError('📄', 'Microsoft Word is not currently running.'); return; }
+      if (result.status === 'no_document') { showWordError('📋', 'No active Word document found.'); return; }
+      if (result.status === 'unsaved')     { showWordError('💾', 'Please save the Word document before submitting it.'); return; }
+      if (result.status === 'error')       { showWordError('⚠️', 'An unexpected error occurred. Please try again.'); return; }
+
+      currentDocInfo = { name: result.name, fullName: result.fullName };
+      document.getElementById('doc-name').textContent = result.name;
+      document.getElementById('doc-path').textContent = result.fullName;
+      showState('confirm');
+    });
+
+    document.getElementById('btn-submit').addEventListener('click', () => {
+      if (currentDocInfo) runProgress(currentDocInfo);
+    });
+
+    document.getElementById('btn-open-workflow').addEventListener('click', () => {
+      if (currentWorkflowUrl) window.electronAPI.openExternal(currentWorkflowUrl);
+    });
+
+    document.getElementById('btn-cancel').addEventListener('click', closeModal);
+    document.getElementById('btn-error-close').addEventListener('click', closeModal);
+    document.getElementById('btn-done').addEventListener('click', closeModal);
+  </script>
+
+</body>
+</html>
