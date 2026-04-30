@@ -147,6 +147,8 @@
     .job-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
     .job-key { color: #888; }
     .job-val { color: #333; font-weight: 500; }
+    .job-id-link { color: #0066cc; font-weight: 500; font-family: 'Consolas', monospace; font-size: 11px; cursor: pointer; text-decoration: underline; background: none; border: none; padding: 0; }
+    .job-id-link:hover { color: #0055aa; }
     .badge { padding: 2px 8px; background: #dcfce7; color: #16a34a; border-radius: 12px; font-size: 11px; font-weight: 600; }
 
     /* Error */
@@ -168,6 +170,9 @@
   <div class="action-bar">
     <button class="btn-word" id="btn-submit-word">
       📄 Submit Word Document
+    </button>
+    <button class="btn-word" id="btn-open-powerpdf" style="background:#c0392b;">
+      📕 Open Power PDF
     </button>
   </div>
 
@@ -244,7 +249,9 @@
               </div>
               <div class="job-row" id="row-job-id" style="display:none">
                 <span class="job-key">Job ID</span>
-                <span class="job-val" id="result-job-id"></span>
+                <span style="display:flex;align-items:center;gap:4px">
+                  <button class="job-id-link" id="result-job-id" title="Click to open in browser"></button>
+                </span>
               </div>
               <div class="job-row">
                 <span class="job-key">Time</span>
@@ -331,8 +338,28 @@
       setStep(0, 'done');
 
       // Step 2 — real API call
+      // Extract SESSION_ID from the already-authenticated webview (try sessionStorage then localStorage)
       setStep(1, 'active');
-      const result = await window.electronAPI.submitWordDocument(docInfo);
+      let sessionId = null;
+      let sdkUrl = null;
+      try {
+        const webview = document.getElementById('form-view');
+        const raw = await webview.executeJavaScript(`
+          (function() {
+            var raw = sessionStorage.getItem('SESSION_ID');
+            var id = raw;
+            try { var p = JSON.parse(raw); if (p && p.value) id = p.value; } catch(e) {}
+            var rawSdk = sessionStorage.getItem('KTA_BASE_SDK_URL');
+            var sdk = rawSdk;
+            try { var ps = JSON.parse(rawSdk); if (ps && ps.value) sdk = ps.value; } catch(e) {}
+            return JSON.stringify({ sessionId: id, sdkUrl: sdk });
+          })()
+        `);
+        const parsed = JSON.parse(raw);
+        sessionId = parsed.sessionId;
+        sdkUrl = parsed.sdkUrl;
+      } catch (err) { /* main process handles missing session */ }
+      const result = await window.electronAPI.submitWordDocument({ ...docInfo, sessionId, sdkUrl });
       if (!result.ok) { showApiError(result); return; }
       setStep(1, 'done');
 
@@ -395,6 +422,15 @@
 
     document.getElementById('btn-open-workflow').addEventListener('click', () => {
       if (currentWorkflowUrl) window.electronAPI.openExternal(currentWorkflowUrl);
+    });
+
+    document.getElementById('result-job-id').addEventListener('click', () => {
+      if (currentWorkflowUrl) window.electronAPI.openExternal(currentWorkflowUrl);
+    });
+
+    document.getElementById('btn-open-powerpdf').addEventListener('click', async () => {
+      const result = await window.electronAPI.openPowerPDF();
+      if (!result.ok) alert(result.message);
     });
 
     document.getElementById('btn-cancel').addEventListener('click', closeModal);

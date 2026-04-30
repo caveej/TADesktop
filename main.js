@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const https = require('https');
 const http = require('http');
 const os = require('os');
+const fs = require('fs');
 
 const TA_URL = 'https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/sene/SENE-Launchpad.form';
 
@@ -61,6 +62,100 @@ function postJson(url, payload, token) {
     req.end();
   });
 }
+
+// ─── TotalAgility SDK client ─────────────────────────────────────────────────
+
+function sdkEndpoint(service, method) {
+  const base = (config.TA_SDK_BASE_URL || `${config.TA_API_BASE_URL}/TotalAgility/Services/Sdk`).replace(/\/$/, '');
+  return `${base}/${service}.svc/json/${method}`;
+}
+
+// Low-level TA SDK POST — unwraps .d, throws on HTTP error.
+function taPost(url, body) {
+  return new Promise((resolve, reject) => {
+    let bodyStr;
+    try { bodyStr = JSON.stringify(body); }
+    catch (e) { return reject(new Error('Failed to serialize request.')); }
+
+    let parsed;
+    try { parsed = new URL(url); }
+    catch (e) { return reject(new Error(`Invalid SDK URL: ${url}`)); }
+
+    const isHttps = parsed.protocol === 'https:';
+    const client = isHttps ? https : http;
+
+    const req = client.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(bodyStr),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            const json = JSON.parse(data);
+            resolve(json.d !== undefined ? json.d : json);
+          } catch { resolve(data); }
+        } else {
+          let msg = `HTTP ${res.statusCode}`;
+          try {
+            const json = JSON.parse(data);
+            const detail = json.ExceptionMessage || json.Message || json.error || json.message;
+            if (detail) msg += `: ${detail}`;
+          } catch { if (data) msg += `: ${data.substring(0, 200)}`; }
+          reject(new Error(msg));
+        }
+      });
+    });
+
+    req.on('error', err => reject(new Error(`Network error: ${err.message}`)));
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+let cachedSessionId = null;
+
+// Session is always sourced from the webview (the user is already authenticated there).
+// If the session is expired, the webview will automatically show the Microsoft login prompt.
+// After signing in, the user retries submission and the fresh SESSION_ID is picked up.
+function ensureSession() {
+  if (!cachedSessionId) throw new Error('SESSION_EXPIRED');
+  return cachedSessionId;
+}
+
+async function getProcessId(sessionId, processName) {
+  const processes = await taPost(sdkEndpoint('ProcessService', 'GetProcessesSummary'), {
+    sessionId,
+    processesSummaryFilter: { AccessType: 1, UseProcessType: true, ProcessType: 0 },
+  });
+  const match = processes.find(p => p.Name === processName);
+  if (!match) throw new Error(`Process "${processName}" not found in TotalAgility.`);
+  return match.Id;
+}
+
+// Calls JobService.CreateJobWithDocuments — the TA SDK equivalent of:
+//   JobService.CreateJob(sessionId, processIdentity, jobInitialization)
+// FolderFields is always included (may be empty) as required by the TA SDK schema.
+async function createJobWithDocument(sessionId, processId, fileBase64, mimeType) {
+  return taPost(sdkEndpoint('JobService', 'CreateJobWithDocuments'), {
+    sessionId,
+    processIdentity: { Id: processId },
+    jobWithDocsInitialization: {
+      RuntimeDocumentCollection: [{ Base64Data: fileBase64, MimeType: mimeType }],
+      InputVariables: [],
+      FolderFields: [],
+    },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.setName('TA Launchpad');
 
@@ -168,26 +263,65 @@ try {
   });
 });
 
-// Calls our server-side wrapper endpoint, which is expected to invoke:
-//   JobService.CreateJob(sessionId, processIdentity, jobInitialization)
-// Electron never calls the TA SDK directly.
 ipcMain.handle('submit-word-document', async (_event, documentInfo) => {
   if (!config.TA_API_BASE_URL) {
-    return { ok: false, message: 'API not configured. Set TA_API_BASE_URL in ta.config.local.js.' };
+    return { ok: false, message: 'TA_API_BASE_URL not configured in ta.config.local.js.' };
   }
-  const payload = {
-    documentName: documentInfo.name,
-    documentPath: documentInfo.fullName,
-    submittedBy: os.userInfo().username,
-    source: 'TotalAgility Desktop Assistant',
-    submittedAt: new Date().toISOString(),
-    processName: 'Word Document Review',
-  };
-  const url = config.TA_API_BASE_URL + config.TA_START_WORKFLOW_ENDPOINT;
-  return postJson(url, payload, config.TA_API_TOKEN || null);
+
+  // Use SESSION_ID and SDK URL extracted from the already-authenticated webview
+  if (documentInfo.sessionId) cachedSessionId = documentInfo.sessionId;
+  if (documentInfo.sdkUrl) config.TA_SDK_BASE_URL = documentInfo.sdkUrl;
+
+  let fileBase64;
+  try {
+    fileBase64 = fs.readFileSync(documentInfo.fullName).toString('base64');
+  } catch (e) {
+    return { ok: false, message: `Could not read document: ${e.message}` };
+  }
+
+  const ext = path.extname(documentInfo.fullName).toLowerCase();
+  const mimeType = ext === '.docx'
+    ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    : ext === '.doc' ? 'application/msword' : 'application/octet-stream';
+
+  async function attempt() {
+    const sessionId = await ensureSession();
+    const processId = await getProcessId(sessionId, config.TA_PROCESS_NAME);
+    const job = await createJobWithDocument(sessionId, processId, fileBase64, mimeType);
+    const jobId = job.Id;
+    const workflowUrl = `${config.TA_API_BASE_URL}/forms/sene/SENE-ManageWorkflow.form?IN_JobID=${jobId}&`;
+    return { ok: true, jobId, workflowUrl };
+  }
+
+  try {
+    return await attempt();
+  } catch (e) {
+    const isSessionError = e.message === 'SESSION_EXPIRED' ||
+      e.message.includes('401') ||
+      e.message.toLowerCase().includes('invalid session') ||
+      e.message.toLowerCase().includes('session id') ||
+      e.message.toLowerCase().includes('timed out');
+
+    if (isSessionError) {
+      cachedSessionId = null;
+      return {
+        ok: false,
+        message: 'Your session has expired. Sign in using the prompt in the app, then try again.',
+      };
+    }
+    return { ok: false, message: e.message };
+  }
 });
 
 ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
+
+ipcMain.handle('open-powerpdf', () => {
+  const shortcut = 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Tungsten Power PDF Business\\Power PDF Business.lnk';
+  if (!fs.existsSync(shortcut)) return { ok: false, message: 'Power PDF shortcut not found.' };
+  shell.openPath(shortcut);
+  return { ok: true };
+});
+
 
 app.whenReady().then(() => {
   // Keep the app running without a dock/taskbar presence
