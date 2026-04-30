@@ -6,7 +6,7 @@ const http = require('http');
 const os = require('os');
 const fs = require('fs');
 
-const TA_URL = 'https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/sene/SENE-Launchpad.form';
+const TA_URL = 'https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/TADesktop/TADesktopLauncher.form';
 
 const config = (() => {
   const defaults = require('./ta.config.js');
@@ -166,8 +166,10 @@ let tray = null;
 let win = null;
 
 const WINDOW_WIDTH = 480;
+const WINDOW_WIDTH_EXPANDED = 960;
 const WINDOW_HEIGHT = 720;
 const MARGIN = 12;
+let windowExpanded = false;
 
 function getWindowPosition() {
   const trayBounds = tray.getBounds();
@@ -187,9 +189,10 @@ function createWindow() {
     height: WINDOW_HEIGHT,
     show: false,
     frame: true,
-    resizable: true,
-    skipTaskbar: true,
+    resizable: false,
+    skipTaskbar: false,
     alwaysOnTop: true,
+    icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -208,6 +211,8 @@ function createWindow() {
   });
 }
 
+const appIcon = () => nativeImage.createFromPath(path.join(__dirname, 'icon.ico'));
+
 function toggleWindow() {
   if (!win || win.isDestroyed()) {
     createWindow();
@@ -215,6 +220,7 @@ function toggleWindow() {
     win.setPosition(x, y, false);
     win.setAlwaysOnTop(true, 'floating');
     win.show();
+    win.setIcon(appIcon());
     win.focus();
     return;
   }
@@ -226,6 +232,7 @@ function toggleWindow() {
     win.setPosition(x, y, false);
     win.setAlwaysOnTop(true, 'floating');
     win.show();
+    win.setIcon(appIcon());
     win.focus();
   }
 }
@@ -313,27 +320,42 @@ ipcMain.handle('submit-word-document', async (_event, documentInfo) => {
   }
 });
 
+ipcMain.handle('toggle-expand', () => {
+  if (!win || win.isDestroyed()) return;
+  const [x, y] = win.getPosition();
+  if (windowExpanded) {
+    const newX = x + (WINDOW_WIDTH_EXPANDED - WINDOW_WIDTH);
+    win.setBounds({ x: newX, y, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
+    windowExpanded = false;
+  } else {
+    const newX = Math.max(0, x - (WINDOW_WIDTH_EXPANDED - WINDOW_WIDTH));
+    win.setBounds({ x: newX, y, width: WINDOW_WIDTH_EXPANDED, height: WINDOW_HEIGHT });
+    windowExpanded = true;
+  }
+  return { expanded: windowExpanded };
+});
+
 ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
 
-ipcMain.handle('open-powerpdf', () => {
-  const shortcut = 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Tungsten Power PDF Business\\Power PDF Business.lnk';
-  if (!fs.existsSync(shortcut)) return { ok: false, message: 'Power PDF shortcut not found.' };
+ipcMain.handle('open-powerpdf', (_event, name = 'Power PDF Business') => {
+  const dir = 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Tungsten Power PDF Business';
+  const shortcut = path.join(dir, `${name}.lnk`);
+  if (!fs.existsSync(shortcut)) return { ok: false, message: `Shortcut not found: ${name}` };
   shell.openPath(shortcut);
   return { ok: true };
 });
 
 
 app.whenReady().then(() => {
-  // Keep the app running without a dock/taskbar presence
-  app.setAppUserModelId('com.ta.launchpad');
-
-  const iconPath = path.join(__dirname, 'icon.png');
+  const iconPath = path.join(__dirname, 'icon.ico');
   const trayIcon = nativeImage.createFromPath(iconPath);
-  tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
+  tray = new Tray(trayIcon);
 
   tray.setToolTip('TA Launchpad');
   tray.on('click', toggleWindow);
   tray.on('double-click', toggleWindow);
+
+  toggleWindow();
 });
 
 app.on('window-all-closed', (e) => {

@@ -24,28 +24,103 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 8px 16px;
-      background: #f5f5f5;
-      border-top: 1px solid #ddd;
-      height: 52px;
+      gap: 10px;
+      padding: 10px 16px;
+      background: linear-gradient(to bottom, #ffffff, #f0f0f0);
+      border-top: 1px solid #d0d0d0;
+      height: 58px;
       flex-shrink: 0;
+      box-shadow: 0 -2px 6px rgba(0,0,0,0.06);
     }
 
     .btn-word {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 8px 18px;
-      background: #0066cc;
+      gap: 7px;
+      padding: 9px 20px;
       color: white;
       border: none;
-      border-radius: 4px;
+      border-radius: 6px;
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
+      letter-spacing: 0.2px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.15);
+      transition: filter 0.15s, transform 0.1s, box-shadow 0.1s;
     }
-    .btn-word:hover { background: #0055aa; }
-    .btn-word:active { background: #004499; }
+    .btn-word:hover { filter: brightness(1.1); box-shadow: 0 3px 8px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.15); }
+    .btn-word:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(0,0,0,0.2); filter: brightness(0.95); }
+
+    #btn-submit-word { background: linear-gradient(135deg, #1e3f7a, #152d5c); }
+    #btn-open-powerpdf { background: linear-gradient(135deg, #f47920, #d96310); border-radius: 6px 0 0 6px; }
+
+    .btn-split { position: relative; display: flex; }
+
+    .btn-split-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      background: linear-gradient(135deg, #f47920, #d96310);
+      border: none;
+      border-left: 1px solid rgba(255,255,255,0.25);
+      border-radius: 0 6px 6px 0;
+      color: white;
+      cursor: pointer;
+      font-size: 9px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.15);
+      transition: filter 0.15s;
+    }
+    .btn-split-arrow:hover { filter: brightness(1.1); }
+    .btn-split-arrow:active { filter: brightness(0.95); }
+
+    .split-dropdown {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 5px);
+      right: 0;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+      overflow: hidden;
+      z-index: 200;
+      min-width: 170px;
+    }
+    .split-dropdown.open { display: block; }
+
+    .split-option {
+      display: block;
+      width: 100%;
+      padding: 9px 14px;
+      text-align: left;
+      background: none;
+      border: none;
+      font-size: 13px;
+      color: #1a1a1a;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .split-option:hover { background: #f0f0f0; }
+
+    .btn-expand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 36px;
+      background: linear-gradient(to bottom, #ffffff, #e8e8e8);
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      color: #444;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+      transition: background 0.12s, box-shadow 0.12s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    .btn-expand:hover { background: linear-gradient(to bottom, #fff, #ddd); box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
+    .btn-expand:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
 
     /* Modal */
     .modal-overlay {
@@ -168,12 +243,21 @@
   <webview id="form-view" allowpopups></webview>
 
   <div class="action-bar">
+    <button class="btn-expand" id="btn-expand" title="Expand / collapse window">«</button>
     <button class="btn-word" id="btn-submit-word">
       📄 Submit Word Document
     </button>
-    <button class="btn-word" id="btn-open-powerpdf" style="background:#c0392b;">
-      📕 Open Power PDF
-    </button>
+    <div class="btn-split">
+      <button class="btn-word" id="btn-open-powerpdf">
+        📄 PowerPDF
+      </button>
+      <button class="btn-split-arrow" id="btn-powerpdf-arrow" aria-label="More Power PDF options">▾</button>
+      <div class="split-dropdown" id="powerpdf-dropdown">
+        <button class="split-option" data-name="Power PDF Business">Power PDF Business</button>
+        <button class="split-option" data-name="Convert Assistant">Convert Assistant</button>
+        <button class="split-option" data-name="Create Assistant">Create Assistant</button>
+      </div>
+    </div>
   </div>
 
   <!-- Modal overlay -->
@@ -429,8 +513,32 @@
     });
 
     document.getElementById('btn-open-powerpdf').addEventListener('click', async () => {
-      const result = await window.electronAPI.openPowerPDF();
+      const result = await window.electronAPI.openPowerPDF('Power PDF Business');
       if (!result.ok) alert(result.message);
+    });
+
+    const powerpdfDropdown = document.getElementById('powerpdf-dropdown');
+
+    document.getElementById('btn-powerpdf-arrow').addEventListener('click', (e) => {
+      e.stopPropagation();
+      powerpdfDropdown.classList.toggle('open');
+    });
+
+    document.addEventListener('click', () => powerpdfDropdown.classList.remove('open'));
+
+    document.querySelectorAll('.split-option').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        powerpdfDropdown.classList.remove('open');
+        const result = await window.electronAPI.openPowerPDF(btn.dataset.name);
+        if (!result.ok) alert(result.message);
+      });
+    });
+
+    const btnExpand = document.getElementById('btn-expand');
+    btnExpand.addEventListener('click', async () => {
+      const result = await window.electronAPI.toggleExpand();
+      btnExpand.textContent = result.expanded ? '»' : '«';
+      btnExpand.title = result.expanded ? 'Collapse window' : 'Expand window';
     });
 
     document.getElementById('btn-cancel').addEventListener('click', closeModal);
