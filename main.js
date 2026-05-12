@@ -355,6 +355,14 @@ app.whenReady().then(() => {
   tray.on('click', toggleWindow);
   tray.on('double-click', toggleWindow);
 
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Reload', click: () => { if (win && !win.isDestroyed()) win.webContents.reload(); } },
+    { label: 'Open in Browser', click: () => shell.openExternal(TA_URL) },
+    { type: 'separator' },
+    { label: 'Exit', click: () => { app.exit(0); } },
+  ]);
+  tray.setContextMenu(contextMenu);
+
   toggleWindow();
 });
 
