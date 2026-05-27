@@ -157,7 +157,7 @@ async function createJobWithDocument(sessionId, processId, fileBase64, mimeType)
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.setName('TA Launchpad');
+app.setName('TA Desktop Agent');
 
 // Prevent the app from showing in the taskbar
 app.dock && app.dock.hide();
@@ -199,7 +199,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       webviewTag: true,
     },
-    title: 'TA Launchpad',
+    title: 'TA Desktop Agent',
   });
 
   win.setAlwaysOnTop(true, 'floating');
@@ -351,7 +351,7 @@ app.whenReady().then(() => {
   const trayIcon = nativeImage.createFromPath(iconPath);
   tray = new Tray(trayIcon);
 
-  tray.setToolTip('TA Launchpad');
+  tray.setToolTip('TA Desktop Agent');
   tray.on('click', toggleWindow);
   tray.on('double-click', toggleWindow);
 
