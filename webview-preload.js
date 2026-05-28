@@ -6,5 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 });
 
 ipcRenderer.on('outlook-email-ready', (_e, detail) => {
-  document.dispatchEvent(new CustomEvent('outlook-email-imported', { detail }));
+  const iframe = document.querySelector('iframe');
+  if (iframe && iframe.contentWindow) {
+    iframe.contentWindow.postMessage({ type: 'outlook-email-imported', path: detail.path, subject: detail.subject }, '*');
+  }
 });
