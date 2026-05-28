@@ -6,7 +6,7 @@ const http = require('http');
 const os = require('os');
 const fs = require('fs');
 
-const TA_URL = 'https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/TADesktop/TADesktopLauncher.form';
+const TA_URL = 'https://demo1-dev.dmoeutta.dev.tungstencloud.com/forms/tacf_da/ta_cf_debugForm.form';
 
 const config = (() => {
   const defaults = require('./ta.config.js');
@@ -121,6 +121,7 @@ function taPost(url, body) {
 }
 
 let cachedSessionId = null;
+let currentUrl = TA_URL;
 
 // Session is always sourced from the webview (the user is already authenticated there).
 // If the session is expired, the webview will automatically show the Microsoft login prompt.
@@ -153,6 +154,23 @@ async function createJobWithDocument(sessionId, processId, fileBase64, mimeType)
       FolderFields: [],
     },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Saved URL storage ───────────────────────────────────────────────────────
+
+function urlsFile() {
+  return path.join(app.getPath('userData'), 'saved-urls.json');
+}
+
+function loadUrls() {
+  try { return JSON.parse(fs.readFileSync(urlsFile(), 'utf8')); }
+  catch { return [{ name: 'Debug Form', url: TA_URL }]; }
+}
+
+function saveUrls(urls) {
+  fs.writeFileSync(urlsFile(), JSON.stringify(urls, null, 2), 'utf8');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -238,6 +256,34 @@ function toggleWindow() {
 }
 
 ipcMain.handle('get-form-url', () => TA_URL);
+
+ipcMain.handle('get-saved-urls', () => loadUrls());
+
+ipcMain.handle('save-url', (_e, entry) => {
+  const urls = loadUrls();
+  urls.push(entry);
+  saveUrls(urls);
+  buildTrayMenu();
+});
+
+ipcMain.handle('delete-url', (_e, index) => {
+  const urls = loadUrls();
+  urls.splice(index, 1);
+  saveUrls(urls);
+  buildTrayMenu();
+});
+
+ipcMain.handle('update-url', (_e, index, entry) => {
+  const urls = loadUrls();
+  urls[index] = entry;
+  saveUrls(urls);
+  buildTrayMenu();
+});
+
+ipcMain.handle('navigate-to', (_e, url) => {
+  currentUrl = url;
+  if (win && !win.isDestroyed()) win.webContents.send('navigate-to', url);
+});
 
 ipcMain.handle('detect-word', () => {
   return new Promise((resolve) => {
@@ -346,6 +392,53 @@ ipcMain.handle('open-powerpdf', (_event, name = 'Power PDF Business') => {
 });
 
 
+let settingsWin = null;
+
+function openSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.focus(); return; }
+  settingsWin = new BrowserWindow({
+    width: 460,
+    height: 580,
+    resizable: false,
+    title: 'TA Desktop Agent — Manage URLs',
+    icon: path.join(__dirname, 'icon.ico'),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+  settingsWin.loadFile('settings.html');
+  Menu.setApplicationMenu(null);
+  settingsWin.on('closed', () => { settingsWin = null; });
+}
+
+function buildTrayMenu() {
+  const urls = loadUrls();
+  const urlItems = urls.map((entry, i) => ({
+    label: entry.name,
+    click: () => {
+      currentUrl = entry.url;
+      if (win && !win.isDestroyed()) win.webContents.send('navigate-to', entry.url);
+      if (!win || win.isDestroyed() || !win.isVisible()) toggleWindow();
+    },
+  }));
+
+  const menu = Menu.buildFromTemplate([
+    ...urlItems,
+    ...(urlItems.length ? [{ type: 'separator' }] : []),
+    { label: 'Manage URLs…', click: openSettingsWindow },
+    { type: 'separator' },
+    { label: 'Reload',         click: () => { if (win && !win.isDestroyed()) win.webContents.reload(); } },
+    { label: 'Open in Browser', click: () => shell.openExternal(currentUrl) },
+    { label: 'Dev Tools',      click: () => { if (win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); } },
+    { type: 'separator' },
+    { label: 'Exit', click: () => app.exit(0) },
+  ]);
+
+  if (tray) tray.setContextMenu(menu);
+}
+
 app.whenReady().then(() => {
   const iconPath = path.join(__dirname, 'icon.ico');
   const trayIcon = nativeImage.createFromPath(iconPath);
@@ -355,14 +448,7 @@ app.whenReady().then(() => {
   tray.on('click', toggleWindow);
   tray.on('double-click', toggleWindow);
 
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Reload', click: () => { if (win && !win.isDestroyed()) win.webContents.reload(); } },
-    { label: 'Open in Browser', click: () => shell.openExternal(TA_URL) },
-    { type: 'separator' },
-    { label: 'Exit', click: () => { app.exit(0); } },
-  ]);
-  tray.setContextMenu(contextMenu);
-
+  buildTrayMenu();
   toggleWindow();
 });
 

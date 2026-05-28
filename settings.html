@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      background: #f7f7f7;
+      color: #1a1a1a;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid #e0e0e0;
+      background: #fff;
+    }
+    .header h1 { font-size: 14px; font-weight: 600; color: #111; }
+    .header p  { font-size: 11px; color: #888; margin-top: 2px; }
+
+    .list-section {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px;
+    }
+
+    .url-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #fff;
+      border: 1px solid #e4e4e4;
+      border-radius: 7px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+    }
+    .url-item-text { flex: 1; min-width: 0; }
+    .url-item-name { font-weight: 600; font-size: 12px; color: #111; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .url-item-url  { font-size: 11px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .url-item-desc { font-size: 11px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; font-style: italic; }
+
+    .btn-icon {
+      flex-shrink: 0;
+      width: 24px; height: 24px;
+      border: none;
+      background: none;
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.12s, color 0.12s;
+    }
+    .btn-delete { color: #bbb; }
+    .btn-delete:hover { background: #ffeaea; color: #e03e3e; }
+    .btn-edit   { color: #bbb; }
+    .btn-edit:hover { background: #eef3ff; color: #0066cc; }
+
+    .cancel-link {
+      font-size: 11px; color: #888; cursor: pointer; text-decoration: underline;
+      text-align: center; display: block; margin-top: 6px;
+    }
+    .cancel-link:hover { color: #333; }
+
+    .empty { text-align: center; color: #aaa; font-size: 12px; padding: 24px 0; }
+
+    .add-section {
+      border-top: 1px solid #e0e0e0;
+      background: #fff;
+      padding: 14px 18px;
+    }
+    .add-section h2 { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+
+    .field { margin-bottom: 8px; }
+    .field label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
+    .field input {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      color: #111;
+      background: #fafafa;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { outline: none; border-color: #0066cc; background: #fff; }
+
+    .btn-add {
+      width: 100%;
+      padding: 8px;
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 4px;
+      transition: background 0.12s;
+    }
+    .btn-add:hover { background: #333; }
+    .btn-add:disabled { background: #ccc; cursor: default; }
+
+    .msg { font-size: 11px; color: #e03e3e; margin-top: 6px; min-height: 14px; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 100px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.28); }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Manage URLs</h1>
+    <p>Saved URLs appear in the system tray menu.</p>
+  </div>
+
+  <div class="list-section" id="url-list"></div>
+
+  <div class="add-section">
+    <h2>Add URL</h2>
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="input-name" placeholder="e.g. Debug Form" />
+    </div>
+    <div class="field">
+      <label>URL</label>
+      <input type="text" id="input-url" placeholder="https://..." />
+    </div>
+    <div class="field">
+      <label>Description <span style="color:#bbb;font-weight:400">(optional)</span></label>
+      <input type="text" id="input-desc" placeholder="Brief note about this URL" />
+    </div>
+    <button class="btn-add" id="btn-add">Add URL</button>
+    <span class="cancel-link" id="cancel-edit" style="display:none">Cancel edit</span>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <script>
+    const listEl      = document.getElementById('url-list');
+    const nameEl      = document.getElementById('input-name');
+    const urlEl       = document.getElementById('input-url');
+    const descEl      = document.getElementById('input-desc');
+    const addBtn      = document.getElementById('btn-add');
+    const cancelLink  = document.getElementById('cancel-edit');
+    const msgEl       = document.getElementById('msg');
+    let editingIndex  = -1;
+
+    function startEdit(i, entry) {
+      editingIndex = i;
+      nameEl.value = entry.name;
+      urlEl.value  = entry.url;
+      descEl.value = entry.description || '';
+      addBtn.textContent = 'Update URL';
+      cancelLink.style.display = 'block';
+      nameEl.focus();
+    }
+
+    function cancelEdit() {
+      editingIndex = -1;
+      nameEl.value = '';
+      urlEl.value  = '';
+      descEl.value = '';
+      addBtn.textContent = 'Add URL';
+      cancelLink.style.display = 'none';
+      msgEl.textContent = '';
+    }
+
+    cancelLink.addEventListener('click', cancelEdit);
+
+    async function render() {
+      const urls = await window.electronAPI.getSavedUrls();
+      listEl.innerHTML = '';
+      if (!urls.length) {
+        listEl.innerHTML = '<div class="empty">No saved URLs yet.</div>';
+        return;
+      }
+      urls.forEach((entry, i) => {
+        const item = document.createElement('div');
+        item.className = 'url-item';
+        item.innerHTML = `
+          <div class="url-item-text">
+            <div class="url-item-name">${entry.name}</div>
+            <div class="url-item-url">${entry.url}</div>
+            ${entry.description ? `<div class="url-item-desc">${entry.description}</div>` : ''}
+          </div>
+          <button class="btn-icon btn-edit" title="Edit">✎</button>
+          <button class="btn-icon btn-delete" title="Remove">✕</button>
+        `;
+        item.querySelector('.btn-edit').addEventListener('click', () => startEdit(i, entry));
+        item.querySelector('.btn-delete').addEventListener('click', async () => {
+          if (editingIndex === i) cancelEdit();
+          await window.electronAPI.deleteUrl(i);
+          render();
+        });
+        listEl.appendChild(item);
+      });
+    }
+
+    addBtn.addEventListener('click', async () => {
+      const name        = nameEl.value.trim();
+      const url         = urlEl.value.trim();
+      const description = descEl.value.trim();
+      msgEl.textContent = '';
+      if (!name) { msgEl.textContent = 'Please enter a name.'; return; }
+      if (!url.startsWith('http')) { msgEl.textContent = 'Please enter a valid URL.'; return; }
+      if (editingIndex >= 0) {
+        await window.electronAPI.updateUrl(editingIndex, { name, url, description });
+        cancelEdit();
+      } else {
+        await window.electronAPI.saveUrl({ name, url, description });
+        nameEl.value = '';
+        urlEl.value  = '';
+        descEl.value = '';
+      }
+      render();
+    });
+
+    [nameEl, urlEl, descEl].forEach(el => el.addEventListener('keydown', e => {
+      if (e.key === 'Enter') addBtn.click();
+    }));
+
+    render();
+  </script>
+
+</body>
+</html>

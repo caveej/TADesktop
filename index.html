@@ -242,6 +242,7 @@
 
   <webview id="form-view" allowpopups></webview>
 
+  <!-- ACTION BAR — temporarily commented out
   <div class="action-bar">
     <button class="btn-expand" id="btn-expand" title="Expand / collapse window">«</button>
     <button class="btn-word" id="btn-submit-word">
@@ -259,6 +260,7 @@
       </div>
     </div>
   </div>
+  END ACTION BAR -->
 
   <!-- Modal overlay -->
   <div class="modal-overlay" id="overlay">
@@ -368,8 +370,27 @@
   </div>
 
   <script>
+    const formView = document.getElementById('form-view');
+
     window.electronAPI.getFormUrl().then(url => {
-      document.getElementById('form-view').src = url;
+      formView.src = url;
+    });
+
+    window.electronAPI.onNavigate(url => {
+      formView.src = url;
+    });
+
+    formView.addEventListener('did-finish-load', () => {
+      formView.insertCSS(`
+        *                               { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.2) transparent; }
+
+        ::-webkit-scrollbar             { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track       { background: transparent; margin: 3px 0; }
+        ::-webkit-scrollbar-thumb       { background: rgba(0,0,0,0.18); border-radius: 100px; transition: background 0.18s ease; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.32); }
+        ::-webkit-scrollbar-thumb:active{ background: rgba(0,0,0,0.45); }
+        ::-webkit-scrollbar-corner      { background: transparent; }
+      `);
     });
 
     const overlay = document.getElementById('overlay');
