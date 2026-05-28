@@ -15,6 +15,48 @@
       background: #fff;
     }
 
+    .titlebar {
+      height: 32px;
+      background: #f3f3f3;
+      border-bottom: 1px solid #d8d8d8;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    .titlebar-icon {
+      width: 14px; height: 14px;
+      margin: 0 6px 0 10px;
+      pointer-events: none;
+      -webkit-app-region: no-drag;
+    }
+    .titlebar-title {
+      flex: 1;
+      font-size: 12px;
+      color: #1a1a1a;
+    }
+    .titlebar-controls {
+      display: flex;
+      height: 100%;
+      -webkit-app-region: no-drag;
+    }
+    .btn-titlebar {
+      width: 46px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      color: #1a1a1a;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.1s;
+    }
+    .btn-titlebar:hover  { background: rgba(0,0,0,0.08); }
+    .btn-titlebar-close:hover { background: #c42b1c; color: #fff; }
+
     webview {
       flex: 1;
       width: 100%;
@@ -234,21 +276,74 @@
     .state-panel { display: none; }
     .state-panel.active { display: block; }
 
+    .outlook-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      background: linear-gradient(to bottom, #ffffff, #f0f0f0);
+      border-top: 1px solid #d0d0d0;
+      flex-shrink: 0;
+      box-shadow: 0 -2px 6px rgba(0,0,0,0.06);
+    }
+    .btn-outlook {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px;
+      background: linear-gradient(135deg, #0078d4, #005fa3);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+      transition: filter 0.15s;
+    }
+    .btn-outlook:hover    { filter: brightness(1.1); }
+    .btn-outlook:active   { filter: brightness(0.92); }
+    .btn-outlook:disabled { opacity: 0.5; cursor: default; filter: none; }
+    .outlook-status {
+      font-size: 11px;
+      color: #888;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .outlook-status.ok    { color: #16a34a; }
+    .outlook-status.error { color: #e03e3e; }
+
     .success-label { font-size: 13px; color: #16a34a; font-weight: 600; margin-bottom: 14px; }
     .recent-label { font-size: 10px; text-transform: uppercase; color: #999; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px; }
   </style>
 </head>
 <body>
 
+  <div class="titlebar">
+    <img class="titlebar-icon" src="icon.ico" draggable="false" />
+    <span class="titlebar-title">TA Desktop Agent</span>
+    <div class="titlebar-controls">
+      <button class="btn-titlebar" id="btn-titlebar-min" title="Minimise">&#x2212;</button>
+      <button class="btn-titlebar btn-titlebar-close" id="btn-titlebar-close" title="Close">&#x2715;</button>
+    </div>
+  </div>
+
   <webview id="form-view" allowpopups></webview>
 
-  <!-- ACTION BAR — temporarily commented out
-  <div class="action-bar">
+  <div class="outlook-bar" id="outlook-bar" style="display:none">
     <button class="btn-expand" id="btn-expand" title="Expand / collapse window">«</button>
-    <button class="btn-word" id="btn-submit-word">
+    <button class="btn-outlook" id="btn-import-outlook">📧 Import from Outlook</button>
+    <span class="outlook-status" id="outlook-status"></span>
+  </div>
+
+  <div class="action-bar" id="action-bar" style="display:none">
+    <button class="btn-word" id="btn-submit-word" style="display:none">
       📄 Submit Word Document
     </button>
-    <div class="btn-split">
+    <div class="btn-split" style="display:none">
       <button class="btn-word" id="btn-open-powerpdf">
         📄 PowerPDF
       </button>
@@ -260,7 +355,6 @@
       </div>
     </div>
   </div>
-  END ACTION BAR -->
 
   <!-- Modal overlay -->
   <div class="modal-overlay" id="overlay">
@@ -370,6 +464,9 @@
   </div>
 
   <script>
+    document.getElementById('btn-titlebar-min').addEventListener('click', () => window.electronAPI.minimizeWindow());
+    document.getElementById('btn-titlebar-close').addEventListener('click', () => window.electronAPI.closeWindow());
+
     const formView = document.getElementById('form-view');
 
     window.electronAPI.getFormUrl().then(url => {
@@ -378,6 +475,40 @@
 
     window.electronAPI.onNavigate(url => {
       formView.src = url;
+    });
+
+    window.electronAPI.onSetActionBar(visible => {
+      document.getElementById('outlook-bar').style.display = visible ? 'flex' : 'none';
+    });
+
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    document.addEventListener('drop',     (e) => e.preventDefault());
+
+    const btnImport     = document.getElementById('btn-import-outlook');
+    const outlookStatus = document.getElementById('outlook-status');
+
+    btnImport.addEventListener('click', async () => {
+      btnImport.disabled = true;
+      outlookStatus.className = 'outlook-status';
+      outlookStatus.textContent = 'Importing…';
+
+      const result = await window.electronAPI.importOutlookEmail();
+
+      if (result.status === 'ok') {
+        outlookStatus.className = 'outlook-status ok';
+        outlookStatus.textContent = `✓ ${result.subject}`;
+      } else if (result.status === 'not_running') {
+        outlookStatus.className = 'outlook-status error';
+        outlookStatus.textContent = 'Outlook is not open.';
+      } else if (result.status === 'none') {
+        outlookStatus.className = 'outlook-status error';
+        outlookStatus.textContent = 'No email selected in Outlook.';
+      } else {
+        outlookStatus.className = 'outlook-status error';
+        outlookStatus.textContent = result.message || 'Import failed.';
+      }
+
+      btnImport.disabled = false;
     });
 
     formView.addEventListener('did-finish-load', () => {

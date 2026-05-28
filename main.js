@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, nativeImage, screen, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Tray, nativeImage, screen, Menu, ipcMain, shell, webContents } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const https = require('https');
@@ -121,7 +121,12 @@ function taPost(url, body) {
 }
 
 let cachedSessionId = null;
-let currentUrl = TA_URL;
+let currentUrl = loadAppSettings().lastUrl ?? TA_URL;
+let actionBarVisible = loadAppSettings().actionBarVisible ?? false;
+let minimizeTo     = loadAppSettings().minimizeTo ?? 'bubble';
+let showInTaskbar  = loadAppSettings().showInTaskbar ?? false;
+let bubbleWin      = null;
+let fadeTimer      = null;
 
 // Session is always sourced from the webview (the user is already authenticated there).
 // If the session is expired, the webview will automatically show the Microsoft login prompt.
@@ -173,6 +178,22 @@ function saveUrls(urls) {
   fs.writeFileSync(urlsFile(), JSON.stringify(urls, null, 2), 'utf8');
 }
 
+// ─── App settings storage ────────────────────────────────────────────────────
+
+function settingsFile() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function loadAppSettings() {
+  try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); }
+  catch { return {}; }
+}
+
+function saveAppSettings(patch) {
+  const current = loadAppSettings();
+  fs.writeFileSync(settingsFile(), JSON.stringify({ ...current, ...patch }, null, 2), 'utf8');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.setName('TA Desktop Agent');
@@ -201,14 +222,98 @@ function getWindowPosition() {
   return { x, y };
 }
 
-function createWindow() {
+function getBubblePosition() {
+  const s = loadAppSettings();
+  if (s.bubbleX != null && s.bubbleY != null) return { x: s.bubbleX, y: s.bubbleY };
+  const wa = screen.getPrimaryDisplay().workArea;
+  return { x: wa.x + wa.width - 72, y: wa.y + wa.height - 72 };
+}
+
+function createBubbleWindow() {
+  const { x, y } = getBubblePosition();
+  bubbleWin = new BrowserWindow({
+    width: 72, height: 72, x, y,
+    frame: false, transparent: true, backgroundColor: '#00000000', resizable: false,
+    skipTaskbar: true, alwaysOnTop: true,
+    show: false,
+    icon: path.join(__dirname, 'icon.ico'),
+    webPreferences: {
+      nodeIntegration: false, contextIsolation: true,
+      preload: path.join(__dirname, 'bubble-preload.js'),
+    },
+  });
+  bubbleWin.loadFile('bubble.html');
+  bubbleWin.setAlwaysOnTop(true, 'floating');
+  bubbleWin.on('moved', () => {
+    if (!bubbleWin || bubbleWin.isDestroyed()) return;
+    const [bx, by] = bubbleWin.getPosition();
+    saveAppSettings({ bubbleX: bx, bubbleY: by });
+  });
+  bubbleWin.on('closed', () => { bubbleWin = null; });
+}
+
+function showBubble() {
+  if (minimizeTo !== 'bubble') return;
+  if (!bubbleWin || bubbleWin.isDestroyed()) createBubbleWindow();
+  bubbleWin.setIgnoreMouseEvents(false);
+  if (!bubbleWin.isVisible()) bubbleWin.show();
+  bubbleWin.setOpacity(1);
+}
+
+function hideBubble() {
+  if (!bubbleWin || bubbleWin.isDestroyed()) return;
+  bubbleWin.setOpacity(0);
+  bubbleWin.setIgnoreMouseEvents(true);
+}
+
+function hideMain() {
+  if (!win || win.isDestroyed() || !win.isVisible()) { showBubble(); return; }
+  if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null; }
+  let opacity = win.getOpacity();
+  fadeTimer = setInterval(() => {
+    opacity = Math.max(0, opacity - 0.12);
+    if (win && !win.isDestroyed()) win.setOpacity(opacity);
+    if (opacity <= 0) {
+      clearInterval(fadeTimer); fadeTimer = null;
+      if (win && !win.isDestroyed()) win.hide();
+      showBubble();
+    }
+  }, 16);
+}
+
+function restoreMain() {
+  hideBubble();
+  const { x, y } = getWindowPosition();
+  if (!win || win.isDestroyed()) createWindow(x, y);
+
+  if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null; }
+
+  win.setOpacity(0);
+  win.show();
+  if (win.isMinimized()) win.restore();
+  win.setPosition(x, y, false);
+  win.setAlwaysOnTop(true, 'floating');
+  win.setIcon(appIcon());
+  win.focus();
+
+  let opacity = 0;
+  fadeTimer = setInterval(() => {
+    opacity = Math.min(1, opacity + 0.12);
+    if (win && !win.isDestroyed()) win.setOpacity(opacity);
+    if (opacity >= 1) { clearInterval(fadeTimer); fadeTimer = null; }
+  }, 16);
+}
+
+function createWindow(startX, startY) {
+  const pos = (startX != null && startY != null) ? { x: startX, y: startY } : {};
   win = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
+    ...pos,
     show: false,
-    frame: true,
+    frame: false,
     resizable: false,
-    skipTaskbar: false,
+    skipTaskbar: !showInTaskbar,
     alwaysOnTop: true,
     icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
@@ -224,38 +329,35 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   win.loadFile('index.html');
 
-  win.on('closed', () => {
-    win = null;
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.send('set-action-bar', actionBarVisible);
   });
+
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.on('will-redirect', (e) => e.preventDefault());
+
+  win.on('close', (e) => {
+    e.preventDefault();
+    hideMain();
+  });
+
+  win.on('minimize', () => {
+    hideMain();
+  });
+
 }
 
 const appIcon = () => nativeImage.createFromPath(path.join(__dirname, 'icon.ico'));
 
 function toggleWindow() {
-  if (!win || win.isDestroyed()) {
-    createWindow();
-    const { x, y } = getWindowPosition();
-    win.setPosition(x, y, false);
-    win.setAlwaysOnTop(true, 'floating');
-    win.show();
-    win.setIcon(appIcon());
-    win.focus();
-    return;
-  }
-
-  if (win.isVisible()) {
-    win.hide();
+  if (win && !win.isDestroyed() && win.isVisible()) {
+    hideMain();
   } else {
-    const { x, y } = getWindowPosition();
-    win.setPosition(x, y, false);
-    win.setAlwaysOnTop(true, 'floating');
-    win.show();
-    win.setIcon(appIcon());
-    win.focus();
+    restoreMain();
   }
 }
 
-ipcMain.handle('get-form-url', () => TA_URL);
+ipcMain.handle('get-form-url', () => currentUrl);
 
 ipcMain.handle('get-saved-urls', () => loadUrls());
 
@@ -282,6 +384,7 @@ ipcMain.handle('update-url', (_e, index, entry) => {
 
 ipcMain.handle('navigate-to', (_e, url) => {
   currentUrl = url;
+  saveAppSettings({ lastUrl: url });
   if (win && !win.isDestroyed()) win.webContents.send('navigate-to', url);
 });
 
@@ -368,20 +471,95 @@ ipcMain.handle('submit-word-document', async (_event, documentInfo) => {
 
 ipcMain.handle('toggle-expand', () => {
   if (!win || win.isDestroyed()) return;
-  const [x, y] = win.getPosition();
+
+  const [startX, startY] = win.getPosition();
+  const startWidth = win.getSize()[0];
+
+  let targetX, targetWidth;
   if (windowExpanded) {
-    const newX = x + (WINDOW_WIDTH_EXPANDED - WINDOW_WIDTH);
-    win.setBounds({ x: newX, y, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
+    targetWidth = WINDOW_WIDTH;
+    targetX = startX + (WINDOW_WIDTH_EXPANDED - WINDOW_WIDTH);
     windowExpanded = false;
   } else {
-    const newX = Math.max(0, x - (WINDOW_WIDTH_EXPANDED - WINDOW_WIDTH));
-    win.setBounds({ x: newX, y, width: WINDOW_WIDTH_EXPANDED, height: WINDOW_HEIGHT });
+    targetWidth = WINDOW_WIDTH_EXPANDED;
+    targetX = Math.max(0, startX - (WINDOW_WIDTH_EXPANDED - WINDOW_WIDTH));
     windowExpanded = true;
   }
+
+  const DURATION = 260;
+  const TICK = 16;
+  const steps = Math.ceil(DURATION / TICK);
+  let step = 0;
+
+  const timer = setInterval(() => {
+    step++;
+    const t = step / steps;
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const x = Math.round(startX + (targetX - startX) * ease);
+    const width = Math.round(startWidth + (targetWidth - startWidth) * ease);
+    if (win && !win.isDestroyed()) win.setBounds({ x, y: startY, width, height: WINDOW_HEIGHT });
+    if (step >= steps) {
+      clearInterval(timer);
+      if (win && !win.isDestroyed()) win.setBounds({ x: targetX, y: startY, width: targetWidth, height: WINDOW_HEIGHT });
+    }
+  }, TICK);
+
   return { expanded: windowExpanded };
 });
 
+ipcMain.handle('restore-main', () => restoreMain());
+ipcMain.handle('minimize-window', () => hideMain());
+ipcMain.handle('close-window',    () => hideMain());
+
 ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
+
+ipcMain.handle('read-file', (_event, filePath) => {
+  return fs.readFileSync(filePath).toString('base64');
+});
+
+ipcMain.handle('import-outlook-email', () => {
+  return new Promise((resolve) => {
+    const script = `
+try {
+  $ol = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+} catch {
+  Write-Output '{"status":"not_running"}'; exit
+}
+try {
+  $sel = $ol.ActiveExplorer().Selection
+  if ($sel.Count -eq 0) { Write-Output '{"status":"none"}'; exit }
+  $item = $sel.Item(1)
+  $safe = $item.Subject -replace '[\\\\/:*?"<>|]', '_'
+  $tmp  = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), $safe + '.msg')
+  $item.SaveAs($tmp, 3)
+  Write-Output (ConvertTo-Json @{ status='ok'; path=$tmp; subject=$item.Subject } -Compress)
+} catch {
+  Write-Output ('{"status":"error","message":"' + ($_.Exception.Message -replace '"',"'") + '"}')
+}
+`;
+    const ps = spawn('powershell', ['-NonInteractive', '-NoProfile', '-Command', script]);
+    let out = '';
+    ps.stdout.on('data', d => { out += d.toString(); });
+    ps.on('close', () => {
+      let result;
+      try { result = JSON.parse(out.trim()); }
+      catch { result = { status: 'error', message: 'Could not parse PowerShell response.' }; }
+
+      if (result.status === 'ok') {
+        const taHostname = new URL(TA_URL).hostname;
+        const webviewWC = webContents.getAllWebContents().find(wc =>
+          wc.id !== win?.webContents.id &&
+          wc.getURL().includes(taHostname)
+        );
+        if (webviewWC) {
+          webviewWC.send('outlook-email-ready', { path: result.path, subject: result.subject });
+        }
+      }
+
+      resolve(result);
+    });
+  });
+});
 
 ipcMain.handle('open-powerpdf', (_event, name = 'Power PDF Business') => {
   const dir = 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Tungsten Power PDF Business';
@@ -419,6 +597,7 @@ function buildTrayMenu() {
     label: entry.name,
     click: () => {
       currentUrl = entry.url;
+      saveAppSettings({ lastUrl: entry.url });
       if (win && !win.isDestroyed()) win.webContents.send('navigate-to', entry.url);
       if (!win || win.isDestroyed() || !win.isVisible()) toggleWindow();
     },
@@ -428,6 +607,31 @@ function buildTrayMenu() {
     ...urlItems,
     ...(urlItems.length ? [{ type: 'separator' }] : []),
     { label: 'Manage URLs…', click: openSettingsWindow },
+    { label: actionBarVisible ? 'Hide Toolbar' : 'Show Toolbar', click: () => {
+        actionBarVisible = !actionBarVisible;
+        saveAppSettings({ actionBarVisible });
+        if (win && !win.isDestroyed()) win.webContents.send('set-action-bar', actionBarVisible);
+        buildTrayMenu();
+    }},
+    { label: 'Show in taskbar', type: 'checkbox', checked: showInTaskbar, click: () => {
+        showInTaskbar = !showInTaskbar;
+        saveAppSettings({ showInTaskbar });
+        if (win && !win.isDestroyed()) win.setSkipTaskbar(!showInTaskbar);
+        buildTrayMenu();
+    }},
+    { label: 'Minimise to', submenu: [
+        { label: 'Floating icon', type: 'radio', checked: minimizeTo === 'bubble', click: () => {
+            minimizeTo = 'bubble';
+            saveAppSettings({ minimizeTo });
+            buildTrayMenu();
+        }},
+        { label: 'System tray', type: 'radio', checked: minimizeTo === 'tray', click: () => {
+            minimizeTo = 'tray';
+            hideBubble();
+            saveAppSettings({ minimizeTo });
+            buildTrayMenu();
+        }},
+    ]},
     { type: 'separator' },
     { label: 'Reload',         click: () => { if (win && !win.isDestroyed()) win.webContents.reload(); } },
     { label: 'Open in Browser', click: () => shell.openExternal(currentUrl) },
@@ -439,6 +643,12 @@ function buildTrayMenu() {
   if (tray) tray.setContextMenu(menu);
 }
 
+app.on('web-contents-created', (_e, wc) => {
+  wc.on('will-attach-webview', (_ev, webPreferences) => {
+    webPreferences.preload = path.join(__dirname, 'webview-preload.js');
+  });
+});
+
 app.whenReady().then(() => {
   const iconPath = path.join(__dirname, 'icon.ico');
   const trayIcon = nativeImage.createFromPath(iconPath);
@@ -448,6 +658,7 @@ app.whenReady().then(() => {
   tray.on('click', toggleWindow);
   tray.on('double-click', toggleWindow);
 
+  createBubbleWindow();
   buildTrayMenu();
   toggleWindow();
 });

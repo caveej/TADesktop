@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 72px; height: 72px;
+      background: transparent;
+      overflow: visible;
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .bubble {
+      width: 50px; height: 50px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #1a3a6e 0%, #0d2347 100%);
+      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: filter 0.1s, transform 0.1s;
+    }
+    .bubble.hover   { filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5)) brightness(1.25); }
+    .bubble.pressed { transform: scale(0.90); filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4)) brightness(0.9); }
+    img {
+      width: 28px; height: 28px;
+      display: block;
+      pointer-events: none;
+      -webkit-app-region: no-drag;
+    }
+  </style>
+</head>
+<body>
+  <div class="bubble" id="bubble">
+    <img src="icon.ico" draggable="false" />
+  </div>
+  <script>
+    const bubble = document.getElementById('bubble');
+    let startX, startY;
+
+    document.addEventListener('mousedown', e => {
+      startX = e.screenX; startY = e.screenY;
+      bubble.classList.add('pressed');
+    });
+    document.addEventListener('mouseup', e => {
+      bubble.classList.remove('pressed');
+      if (Math.abs(e.screenX - startX) < 5 && Math.abs(e.screenY - startY) < 5) {
+        window.electronAPI.restoreMain();
+      }
+    });
+    document.addEventListener('mouseenter', () => bubble.classList.add('hover'));
+    document.addEventListener('mouseleave', () => {
+      bubble.classList.remove('hover');
+      bubble.classList.remove('pressed');
+    });
+  </script>
+</body>
+</html>
